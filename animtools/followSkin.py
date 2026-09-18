@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-followSkin.py - 表面跟随工具（完整版）
-功能：让选中的物体跟随曲面/网格表面运动，带法线对齐和向上方向控制
-完全还原原始 MEL 脚本功能
-作者：MEL to Python 转换
-"""
+
 
 import maya.cmds as cmds
 import maya.mel as mel
