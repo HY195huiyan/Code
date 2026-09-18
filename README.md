@@ -1,7 +1,14 @@
-Welcome to the personal GitHub place for Hui Yan
+**简介**
 
-This is where all the code is stored
+此为个人资产管线工具复刻内容，涵盖对应maya资产管线源码
 
-For user manuals,please check this website
+具体使用文档：
 
-      https://app.notion.com/p/3df44ae1589b80a39f7de957b584f693
+https://app.notion.com/p/3df44ae1589b80a39f7de957b584f693
+
+**环境要求**
+
+Maya 2025， Python 3
+
+**注意**
+> 本项目代码为个人复刻工具，不包含公司业务保密内容代码
