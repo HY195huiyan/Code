@@ -1,7 +1,7 @@
 
 
 from maya import cmds
-from CharacterDefinitions import character_definitions as cd
+import character_definitions as cd
 
 class RibbonIkFkMatch():
 
