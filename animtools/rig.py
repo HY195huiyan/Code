@@ -1,10 +1,10 @@
 
 import sys
 
-import CharacterDefinitions.character_definitions as cd
-from . import dag as dagUtils
+import character_definitions as cd
+import dag as dagUtils
 import maya.cmds as mc
-from . import mesh as meshUtils
+import mesh as meshUtils
 from RigBuild import config
 import importlib
 
