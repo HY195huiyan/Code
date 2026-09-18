@@ -1,0 +1,43 @@
+global proc string[] createLocatorAtObject()
+{
+	// get selected objects
+	string $sel[] = `ls -sl`;
+	int $count = size($sel);
+	
+	// check to for selected objects
+	if ($count == 0)
+		error("No objects selected.");
+	
+	string $locs[];
+	string $tmp[];
+	float $pos[];
+	float $rot[];
+	//float $localPivot[];
+	
+	// create and align locator for every selected object
+	for ($i=0;$i<$count;$i++)
+	{
+		// get position of object
+		$pos = `xform -ws -q -piv $sel[$i]`;
+		$rot = `xform -ws -q -ro $sel[$i]`;
+		$rotOrder = `xform -ws -q -roo $sel[$i]`;
+		//$localPivot = `getAttr ($sel[$i]+".rp")`;
+		
+		// create locator
+		$tmp = `spaceLocator`;
+		string $prefix = `substituteAllString $sel[$i] ":" "___"`;
+		$locs[$i] = `rename $tmp[0] ($prefix+"Loc")`;
+		addAttr -at "message" -ln "snapObj" -sn "so" $locs[$i];
+		connectAttr ($sel[$i]+".message") ($locs[$i]+".snapObj");
+		
+		// align locator to object
+		//xform -ws -t $pos[0] $pos[1] $pos[2] $locs[$i];
+		//xform -ws -ro $rot[0] $rot[1] $rot[2] $locs[$i];
+		//xform -t ($pos[0]+$localPivot[0]) ($pos[1]+$localPivot[1]) ($pos[2]+$localPivot[2]) $locs[$i];
+		xform -ws -t $pos[3] $pos[4] $pos[5] $locs[$i];
+		xform -ws -roo $rotOrder -ro $rot[0] $rot[1] $rot[2] $locs[$i];
+	}
+	
+	select -r $locs;
+	return $locs;
+}

@@ -1,0 +1,79 @@
+global proc followObjectOnKeys()
+{
+	string $sel[] = `ls -sl`;
+	
+	if (size($sel) < 2)
+		error("First select one object to align to and then all the objects to be aligned.");
+
+	float $pos[];
+	float $rot[];
+	string $loc[];
+	string $locs[];
+	$locs[0] = "";
+	string $con;
+
+	for ($i=1;$i<size($sel);$i++)
+	{
+		string $const[] = `listRelatives -c -type pointConstraint -type orientConstraint -type parentConstraint $sel[$i]`;
+		
+		// if constraints exist then they are not anything but poleVectorConstraint.. otherwise exit
+		for ($con in $const)
+			if (`objectType $con` != "poleVectorConstraint")
+				// error
+				error ("Object is constrained.");
+
+		// create locators and align them with the object and parent to the last selected object
+		$loc =`spaceLocator -p 0 0 0`;
+		$locs[$i] = $loc[0];
+		$pos = `xform -ws -q -t $sel[$i]`;
+		$rot = `xform -ws -q -ro $sel[$i]`;
+		xform -ws -t $pos[0] $pos[1] $pos[2] -ro $rot[0] $rot[1] $rot[2] $locs[$i];
+		parent $locs[$i] $sel[0];
+	}
+
+	float $timeRange[] = getTimeRange();
+
+	float $sTime = `findKeyframe -t ($timeRange[0]+":"+$timeRange[1]) $sel`;
+	float $eTime = $timeRange[1];
+	float $t = $sTime;
+	currentTime -100000;
+
+	autoKeyframe -state 1;
+	
+	//minimize maya
+	//if (`exists mayaProcessing.mel`)
+	//	mayaProcessing 1;
+	
+	// align objects to locators
+	while (`currentTime -q` != $t)
+	{
+		currentTime $t;
+		for ($i=1;$i<size($sel);$i++)
+		{
+			$pos = `xform -ws -q -t $locs[$i]`;
+			$rot = `xform -ws -q -ro $locs[$i]`;
+			xform -ws -t $pos[0] $pos[1] $pos[2] -ro $rot[0] $rot[1] $rot[2] $sel[$i];
+			
+			if ($t == $sTime)
+			{
+				setKeyframe ($sel[$i]+".translate");
+				setKeyframe ($sel[$i]+".rotate");
+			}
+		}
+
+		$t = `findKeyframe -t $t $sel`;
+		if ($t > $eTime || $t <= $sTime)
+			break;
+	}
+	
+	// maximize maya back up
+	//if (`exists mayaProcessing.mel`)
+	//	mayaProcessing 0;
+
+	for($i=1;$i<size($locs);$i++)
+		delete $locs[$i];
+		
+	select -r $sel;
+	
+	filterCurve ;
+}

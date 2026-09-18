@@ -1,0 +1,91 @@
+// ============================================================
+// eulerFilter 核心功能
+// ============================================================
+global proc eulerFilter(string $nodes[])
+{
+    for($node in $nodes)
+    {
+        if(!`attributeExists ".noEulerFilter" $node`)
+        {
+            string $animCurves[] = `listConnections -type animCurveTA $node`;
+            filterCurve $animCurves;
+            print ("Processed: " + $node + "\n");
+        }
+    }
+    print ("----------------------------------------------------------------------------------------------" + "\n");         
+    print "Done Running eulerFilter\n" ;
+    print ("----------------------------------------------------------------------------------------------" + "\n") ;
+}
+
+// ============================================================
+// UI 界面
+// ============================================================
+global proc eulerFilterUI()
+{
+    // 检查窗口是否已存在，如果存在则删除重建
+    if(`window -exists eulerFilterWindow`)
+    {
+        deleteUI eulerFilterWindow;
+    }
+    
+    // 创建窗口
+    window -title "Euler Filter Tool" 
+           -widthHeight 200 100
+           -sizeable true
+           eulerFilterWindow;
+    
+    // 创建垂直布局
+    columnLayout -columnAlign "center" 
+                 eulerFilterMainLayout;   
+    
+    text -label "Apply Euler Filter to selected objects" 
+         -align "center";
+
+    separator -height 10;
+    
+    // 按钮行 - 两个按钮自动填满窗口
+    rowLayout -numberOfColumns 2 
+              -adjustableColumn 1 
+              -adjustableColumn 2 
+              -columnAlign2 "center" "center"
+              -columnWidth2 200 200;  // 初始宽度，会被 adjustable 覆盖
+
+    // 执行按钮（绿色高亮）
+    button -label "Apply Filter" 
+           -backgroundColor 0.3 0.7 0.3 
+           -command "eulerFilterOnSelected()";
+    
+    // 关闭按钮
+    button -label "Close" 
+           -command "deleteUI eulerFilterWindow";
+    
+    setParent ..;
+    
+    // 底部状态信息
+    separator -height 10;
+    text -label "Select objects with rotation animation first" 
+         -align "center" 
+         -font "smallPlainLabelFont";
+    
+    // 显示窗口
+    showWindow eulerFilterWindow;
+}
+
+// ============================================================
+// 执行函数：获取选中物体并调用 eulerFilter
+// ============================================================
+global proc eulerFilterOnSelected()
+{
+    // 获取当前选中的物体
+    string $sel[] = `ls -sl`;
+    
+    // 检查是否有选中物体
+    if(size($sel) == 0)
+    {
+        warning "Please select at least one object!";
+        return;
+    }
+    
+    // 调用核心函数
+    eulerFilter($sel);
+}

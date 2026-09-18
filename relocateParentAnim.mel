@@ -1,0 +1,399 @@
+global proc setTransVals()
+{
+	string $sel[] = `ls -sl`;
+	if (size($sel) == 0)
+		return;
+	
+	float $vals[] = `getAttr ($sel[0]+".t")`;
+	
+	textField -e -text $vals[0] txtTx;
+	textField -e -text $vals[1] txtTy;
+	textField -e -text $vals[2] txtTz;
+}
+
+
+// Set rotate fields in UI
+global proc setRotVals()
+{
+	string $sel[] = `ls -sl`;
+	if (size($sel) == 0)
+		return;
+	
+	float $vals[] = `getAttr ($sel[0]+".r")`;
+	
+	textField -e -text $vals[0] txtRx;
+	textField -e -text $vals[1] txtRy;
+	textField -e -text $vals[2] txtRz;
+}
+
+
+// Set rotate fields in UI
+global proc setScaleVals()
+{
+	string $sel[] = `ls -sl`;
+	if (size($sel) == 0)
+		return;
+	
+	float $vals[] = `getAttr ($sel[0]+".s")`;
+	
+	textField -e -text $vals[0] txtSx;
+	textField -e -text $vals[1] txtSy;
+	textField -e -text $vals[2] txtSz;
+}
+
+
+// Run Proc from UI
+global proc relocateParentAnimFromUI()
+{
+	float $tx = (float)(`textField -q -text txtTx`);
+	float $ty = (float)(`textField -q -text txtTy`);
+	float $tz = (float)(`textField -q -text txtTz`);
+	
+	float $rx = (float)(`textField -q -text txtRx`);
+	float $ry = (float)(`textField -q -text txtRy`);
+	float $rz = (float)(`textField -q -text txtRz`);
+
+	float $sx = (float)(`textField -q -text txtSx`);
+	float $sy = (float)(`textField -q -text txtSy`);
+	float $sz = (float)(`textField -q -text txtSz`);
+
+	int $cb = `checkBox -q -value cb_relocateParentAnim`;
+	
+	relocateParentAnimDo $tx $ty $tz $rx $ry $rz $sx $sy $sz $cb;
+}
+
+
+// UI
+global proc relocateParentAnim()
+{
+	string $win = "relocateParentAnimWin";
+	if (`window -q -exists $win`)
+		deleteUI $win;
+	
+	string $path = `whatIs "RelocateParentAnim/relocateParentAnim.mel"`;
+	$path = toNativePath(`match ".:/.+" $path`);
+	string $pathParts[];
+	tokenize $path "\\" $pathParts;
+	$size = `size $pathParts`;
+
+	string $dirPath;
+	for( $i=0; $i<$size-1; $i++ ) {
+		if ($i == 0) {
+			$dirPath = $dirPath+$pathParts[$i];
+		}
+		else {
+			$dirPath = $dirPath+"/"+$pathParts[$i];
+		}
+	}
+
+	string $icon = $dirPath+"/incoming.png";
+		
+	window -wh 260 325 -toolbox 1 -title "Transfer Parent Anim" $win;
+	//string $topLayout = `formLayout -numberOfDivisions 2 -parent $win`;
+	string $topLayout = `columnLayout -rowSpacing 10 -columnAttach "both" 5 -adjustableColumn 1`;
+		separator -style "in";
+		string $txt = `text -align "left" -label "1. Enter \"Parent Destination\" values below.\n2. Select the parent control (ex. Main control).\n3. Select child controls (ex. Pelvis and IK controls)."`;
+		
+	    string $transFrame = `frameLayout -parent $topLayout -marginWidth 5 -marginHeight 5 -label "Translate" -collapsable false`;
+	        rowLayout -numberOfColumns 4;
+	            string $tx = `textField -width 70 -text "0" txtTx`;
+	            string $ty = `textField -width 70 -text "0" txtTy`;
+	            string $tz = `textField -width 70 -text "0" txtTz`;
+				symbolButton -image $icon -ann "Set translate values from selected object's position" -command "setTransVals";
+
+	    string $rotFrame = `frameLayout -parent $topLayout -marginWidth 5 -marginHeight 5 -label "Rotate" -collapsable false`;
+	        rowLayout -numberOfColumns 4;
+	    	    string $rx = `textField -width 70 -text "0" txtRx`;
+	            string $ry = `textField -width 70 -text "0" txtRy`;
+    	        string $rz = `textField -width 70 -text "0" txtRz`;
+				symbolButton -image $icon -ann "Set rotation values from selected object's rotation" -command "setRotVals";
+
+		string $scaleFrame = `frameLayout -parent $topLayout -marginWidth 5 -marginHeight 5 -label "Scale" -collapsable false`;
+	        rowLayout -numberOfColumns 4;
+	    	    string $sx = `textField -width 70 -text "1" txtSx`;
+	            string $sy = `textField -width 70 -text "1" txtSy`;
+    	        string $sz = `textField -width 70 -text "1" txtSz`;
+				symbolButton -image $icon -ann "Set scale values from selected object's scale" -command "setScaleVals";
+	    
+	    string $columnLayout = `columnLayout -parent $topLayout`;
+			string $checkBox = `checkBox -label "Bake Every Frame" cb_relocateParentAnim`;
+
+		rowLayout -parent $topLayout -numberOfColumns 2 -columnAttach2 "both" "both" -columnWidth2 122 122;
+			string $btnOk = `button -label "Ok" -command "relocateParentAnimFromUI"`;
+			string $btnCancel = `button -label "Close" -command ("deleteUI "+$win)`;
+
+	showWindow $win;
+}
+
+
+// The Proc
+global proc relocateParentAnimDo(float $posX, float $posY, float $posZ, float $rotX, float $rotY, float $rotZ, float $scaleX, float $scaleY, float $scaleZ, int $bakeEveryFrame)
+{
+
+	// set autoKey to 0 to speed up process
+	int $autoKey = `autoKeyframe -q -state`;
+	autoKeyframe -state 0;
+
+	catch(relocateParentAnimDoSafe($posX, $posY, $posZ, $rotX, $rotY, $rotZ, $scaleX, $scaleY, $scaleZ, $bakeEveryFrame));
+	if ($autoKey)
+		autoKeyframe -state $autoKey;
+
+	// End progressWindow
+	progressWindow -edit -endProgress;
+}
+
+global proc relocateParentAnimDoSafe(float $posX, float $posY, float $posZ, float $rotX, float $rotY, float $rotZ, float $scaleX, float $scaleY, float $scaleZ, int $bakeEveryFrame)
+{
+
+	string $sel[] = `ls -sl`;
+	if (size($sel) < 2)
+		error("You must select at least two objects. The parent and a child to transfer animation to.");
+
+	string $locs[];
+	float $timeRange[] = getTimeRange();
+	float $startKey = `findKeyframe -t (($timeRange[0]-1)+":"+$timeRange[1]) -w next $sel`;
+	float $endKey = `findKeyframe -t ($timeRange[1]-1) -w next $sel`;
+	float $t = 0;
+	float $pos[], $rot[], $scale[];
+	float $keys[] = `keyframe -t ($timeRange[0]+":"+$timeRange[1]) -q $sel[0]`;
+	int $keyIndexes[];
+	float $key;
+	string $animLayers[] = `ls -type animLayer`;
+	string $selLayer;
+	string $layers[];
+	int $objOnLayer = 0;
+	
+	int $minimize = 0;
+	
+	if (!`exists "mayaProcessing.mel"`)
+		$minimize = 0;
+		
+	string $driver = $sel[0];
+
+	// find which animLayer is selected
+	for ($layer in $animLayers)
+		if (`animLayer -q -selected $layer`)
+		{
+			$selLayer = $layer;
+			break;
+		}
+
+	// see what layers objects belong to
+	if (size($animLayers) > 0)
+	{
+		clear($animLayers);
+		for ($obj in $sel)
+		{
+			select -r $obj;
+			$layers = `animLayer -q -affectedLayers`;
+			if (size($layers) > 0)
+				$animLayers = stringArrayCatenate ($animLayers, $layers);
+		}
+	}
+	
+	// if an anim layer is selected then make sure that all selected objects are on that layers
+	if ($selLayer != "" && size($animLayers))
+	{
+		for ($obj in $sel)
+		{
+			$objOnLayer = 0;
+			for ($layer in $animLayers)
+			{
+				if ($layer == $selLayer)
+				{
+					$objOnLayer = 1;
+					break;
+				}
+			}
+			if (!$objOnLayer)
+				error($obj+" is not on layer "+ $selLayer);
+		}
+	}
+	
+	if (size($keys))
+	{
+		$keys = floatArrayRemoveDuplicates($keys);
+		$keys = sort($keys);
+	}
+	
+	// create locators and add to animLayer
+	for ($i=0;$i<size($sel);$i++)
+	{
+		string $loc[] =`spaceLocator -p 0 0 0`;
+		$locs[$i] = $loc[0];
+		if ($selLayer != "")
+			animLayer -e -addSelectedObjects $selLayer;
+	}
+	
+	// close script editor
+	if (`window -q -exists scriptEditorPanel1Window`)
+		deleteUI scriptEditorPanel1Window;
+		
+
+
+	if ($minimize)
+		mayaProcessing 1;
+
+	// Key object if no keys exist on the object
+	for ($i=0;$i<size($sel);$i++)
+	{	
+		currentTime ($timeRange[0]-1);
+		$t = `findKeyframe -t (($timeRange[0]-1)+":"+$timeRange[1]) -w next $sel[0] $sel[$i]`;
+
+		if ($i != 0 && size($keys))
+		{
+			$lastKey = `findKeyframe -t ($t+":"+$endKey) -w last $sel[$i]`;
+			if ($lastKey < ($keys[(size($keys)-1)]))
+			{
+				for ($k=0;$k<size($keys);$k++)
+				{
+					if ($lastKey < $keys[$k])
+					{
+						setKeyframe -time $keys[$k] ($sel[$i]+".t");
+						setKeyframe -time $keys[$k] ($sel[$i]+".r");
+						setKeyframe -time $keys[$k] ($sel[$i]+".s");
+					}
+				}
+			}
+		}
+	}
+	
+	// Bake every frame in time range for source node if that option is enabled.
+	if ($bakeEveryFrame == 1)
+		bakeResults -time ($timeRange[0]+":"+$timeRange[1]) -preserveOutsideKeys true -at tx -at ty -at tz -at rx -at ry -at rz -at sx -at sy -at sz $sel[0];
+
+	$keys = `keyframe -t ($timeRange[0]+":"+$timeRange[1]) -q $sel`;
+	if (size($keys))
+	{
+		$keys = floatArrayRemoveDuplicates($keys);
+		$keys = sort($keys);
+	}
+	
+	// Start a progressWindow
+	progressWindow
+		-title "Zero out Parent Anim"
+		-isInterruptable true
+		-status "Aligning Locators ..."
+		-maxValue ((size($keys))*2);
+
+	// align locators to objects
+	for ($key in $keys)
+	{
+			// Advance progressWindow
+	 	if(`progressWindow -query -isCancelled`)
+		{
+			progressWindow -edit -endProgress;
+			error("Process was cancelled by user.  Some extra locators might exist in the scene.");
+		}
+		else
+		{
+			progressWindow -edit -status ("Aquiring Position") -step 1;
+		}
+		
+		currentTime $key;
+		
+		for ($i=0;$i<size($sel);$i++)
+		{
+			// Align locator to object
+			$pos = `xform -ws -q -t $sel[$i]`;
+			$rot = `xform -ws -q -ro $sel[$i]`;
+			$scale = `xform -ws -q -s $sel[$i]`;
+			//xform -ws -t $pos[0] $pos[1] $pos[2] -ro $rot[0] $rot[1] $rot[2] $locs[$i];
+			xform -t $pos[0] $pos[1] $pos[2] -ro $rot[0] $rot[1] $rot[2] -s $scale[0] $scale[1] $scale[2] $locs[$i];
+
+			setKeyframe ($locs[$i]+".t");
+			setKeyframe ($locs[$i]+".r");
+			setKeyframe ($locs[$i]+".s");
+		}
+	}
+	
+	progressWindow -edit -status ("Reseting parent") -step 1;
+	
+	cutKey -t ($timeRange[0]+":"+$timeRange[1]) -at tx -at ty -at tz -at rx -at ry -at rz -at sx -at sy -at sz $sel[0];
+
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $posX ($sel[0]+".tx");
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $posY ($sel[0]+".ty");
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $posZ ($sel[0]+".tz");
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $rotX ($sel[0]+".rx");
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $rotY ($sel[0]+".ry");
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $rotZ ($sel[0]+".rz");
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $scaleX ($sel[0]+".sx");
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $scaleY ($sel[0]+".sy");
+	setKeyframe -time $timeRange[0] -time $timeRange[1] -itt "linear" -ott "linear" -value $scaleZ ($sel[0]+".sz");
+
+	// align objects to locators
+	for ($key in $keys)
+	{
+		// Advance progressWindow
+	 	if(`progressWindow -query -isCancelled`)
+		{
+			progressWindow -edit -endProgress;
+			error("Process was cancelled by user.  Some objects might not have baked correctly.");
+		}
+		else
+		{
+			progressWindow -edit -status ("Positioning objects") -step 1;
+		}
+		
+		currentTime $key;
+		
+		for ($i=1;$i<size($sel);$i++)
+		{
+			clear($keyIndexes);
+			$keyIndexes = `keyframe -t $key -q -iv $sel[0] $sel[$i]`;
+
+			$pos = `xform -ws -q -t $locs[$i]`;
+			$rot = `xform -ws -q -ro $locs[$i]`;
+			$scale = `xform -ws -q -s $locs[$i]`;
+			xform -ws -t $pos[0] $pos[1] $pos[2] -ro $rot[0] $rot[1] $rot[2] -s $scale[0] $scale[1] $scale[2] $sel[$i];
+
+			setKeyframe ($sel[$i]+".t");
+			setKeyframe ($sel[$i]+".r");
+			setKeyframe ($sel[$i]+".s");
+		}
+	}
+	
+	// reset tangents to spline
+	//keyTangent -inTangentType spline -outTangentType spline ($sel[0]+".t") ($sel[0]+".r");
+
+	if (size($locs))
+		delete $locs;
+		
+	filterCurve $sel;
+		
+	if ($minimize)
+		mayaProcessing 0;
+}
+
+// remove duplicate values from a floatArray
+global proc float[] floatArrayRemoveDuplicates(float $list[])
+{
+	float $newList[];
+	int $flag = 0;
+	int $c = 0;
+
+	for ($i=0;$i<size($list);$i++)
+	{			
+		for ($j=0;$j<size($newList);$j++)
+		{
+			if ($list[$i] == $newList[$j])
+			{
+				$flag = 0;
+				break;
+			}
+			else
+			{
+				$flag = 1;
+			}	
+		}
+		
+		if ($c == 0 || $flag)
+		{
+			$newList[$c] = $list[$i];
+			$c++;
+		}
+	}
+	
+	return $newList;
+}
+

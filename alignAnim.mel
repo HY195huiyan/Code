@@ -1,0 +1,81 @@
+
+
+global proc alignAnim(int $options[])//[0] is translation and [1] is rotation
+{
+    string $selected[];
+    $selected = `ls -sl`;
+    if (size($selected) != 2)
+        error "You have too many or not enough selected. select the effector and then the effected.";
+        
+    string $loc[];
+    $loc = `spaceLocator -n "rotoLocator1"`;
+   
+    $currentTime = `currentTime -q`;
+    float $start;
+    float $end;
+    float $parentPos[];
+    float $parentRot[];
+    float $childPos[];
+    float $childRot[];
+    float $locPos[];
+    float $locRot[];
+    int $rotOrder;
+    
+    $parentPos = `xform -q -ws -t $selected[0]`;
+    $parentRot = `xform -q -ws -ro $selected[0]`;
+    //getting and setting rotate order for new XZY orders on character rigs
+    $rotOrder = `getAttr ($selected[0]+".rotateOrder")`;
+    setAttr ($loc[0] + ".rotateOrder") $rotOrder;
+    xform -ws -t $parentPos[0] $parentPos[1] $parentPos[2] $loc;
+    xform -ws -ro $parentRot[0] $parentRot[1] $parentRot[2] $loc;
+    parent $loc $selected[0];
+    $rotOrder = `getAttr ($selected[1]+".rotateOrder")`;
+    setAttr ($loc[0] + ".rotateOrder") $rotOrder;
+    
+    
+    
+    for ($i=0;size($selected)>$i;$i+=2)
+    {
+        $start = `findKeyframe -w first $selected[$i]`;
+        $end = `findKeyframe -w last $selected[$i]`;
+        
+        while($start<$end)
+        {
+            currentTime $start;
+            
+            if ($options[0] == 1)
+            {
+                $locPos = `xform -q -ws -t $loc`;
+                xform -ws -t $locPos[0] $locPos[1] $locPos[2] $selected[$i+1];
+            }
+            if ($options[1] == 1)
+            {
+                $locRot = `xform -q -ws -ro $loc`;
+                xform -ws -ro $locRot[0] $locRot[1] $locRot[2] $selected[$i+1];
+            }
+            setKeyframe -breakdown 0 -hierarchy none -controlPoints 0 -shape 0 $selected[$i+1];
+            
+            select $selected[$i];
+            $start = `findKeyframe -which next`;
+        }
+        currentTime $start;
+        
+        if ($options[0] == 1)
+        {
+            $locPos = `xform -q -ws -t $loc`;
+            xform -ws -t $locPos[0] $locPos[1] $locPos[2] $selected[$i+1];
+        }
+        if ($options[1] == 1)
+        {
+            $locRot = `xform -q -ws -ro $loc`;
+            xform -ws -ro $locRot[0] $locRot[1] $locRot[2] $selected[$i+1];
+        }
+        setKeyframe -breakdown 0 -hierarchy none -controlPoints 0 -shape 0 $selected[$i+1];
+    }
+    if (`objExists $loc[0]`)
+        delete $loc[0];
+    
+    currentTime -e $currentTime;
+    select $selected;
+}
+

@@ -1,0 +1,225 @@
+// ============================================================
+//  Snap Controls To Curve - UI Tool
+//  Left: controller list   Right: target curve   Bottom: RUN
+// ============================================================
+
+// ---------- Core: snap one ctrl to a CV (world space) ----------
+global proc snapOneCtrlToCV(string $ctrl, string $curve, int $cvIndex)
+{
+    float $pos[] = `pointPosition ($curve + ".cv[" + $cvIndex + "]")`;
+    move -ws $pos[0] $pos[1] $pos[2] $ctrl;
+}
+
+// ---------- Core: snap ctrls in order (1st -> cv[0], 2nd -> cv[1]...) ----------
+global proc snapCtrlsToCurveOrdered(string $ctrls[], string $curve)
+{
+    string $shapes[] = `listRelatives -shapes $curve`;
+    if (size($shapes) == 0)
+        error ("Curve not found: " + $curve);
+
+    int $numCV = `getAttr ($shapes[0] + ".spans")` + `getAttr ($shapes[0] + ".degree")`;
+
+    int $n = size($ctrls);
+    if ($n > $numCV)
+    {
+        warning ("Ctrl count (" + $n + ") exceeds CV count (" + $numCV + "). Extra ctrls skipped.");
+        $n = $numCV;
+    }
+
+    for ($i = 0; $i < $n; $i++)
+    {
+        if (!`objExists $ctrls[$i]`)
+        {
+            warning ("Object not found, skipped: " + $ctrls[$i]);
+            continue;
+        }
+        snapOneCtrlToCV($ctrls[$i], $curve, $i);
+        print ("Snapped " + $ctrls[$i] + " -> cv[" + $i + "]\n");
+    }
+}
+
+// ---------- Core: snap all ctrls to the same CV ----------
+global proc snapCtrlsToCurveSame(string $ctrls[], string $curve, int $cvIndex)
+{
+    for ($c in $ctrls)
+    {
+        if (!`objExists $c`) continue;
+        snapOneCtrlToCV($c, $curve, $cvIndex);
+        print ("Snapped " + $c + " -> cv[" + $cvIndex + "]\n");
+    }
+}
+
+// ---------- UI callbacks ----------
+
+global proc snapUI_RefreshCtrlList()
+{
+    global string $gSnapCtrls[];
+    textScrollList -edit -removeAll "ctrlList";
+    for ($c in $gSnapCtrls)
+        textScrollList -edit -append $c "ctrlList";
+}
+
+global proc snapUI_AddCtrls()
+{
+    global string $gSnapCtrls[];
+    string $sel[] = `ls -sl`;
+    if (size($sel) == 0)
+    {
+        warning "Nothing selected.";
+        return;
+    }
+    for ($s in $sel)
+    {
+        int $exists = 0;
+        for ($c in $gSnapCtrls)
+            if ($c == $s) { $exists = 1; break; }
+
+        if (!$exists)
+            $gSnapCtrls[size($gSnapCtrls)] = $s;
+    }
+    snapUI_RefreshCtrlList();
+}
+
+global proc snapUI_RemoveCtrls()
+{
+    global string $gSnapCtrls[];
+    string $selected[] = `textScrollList -q -selectItem "ctrlList"`;
+    if (size($selected) == 0) return;
+
+    string $newList[];
+    for ($c in $gSnapCtrls)
+    {
+        int $remove = 0;
+        for ($s in $selected)
+            if ($s == $c) { $remove = 1; break; }
+        if (!$remove)
+            $newList[size($newList)] = $c;
+    }
+    $gSnapCtrls = $newList;
+    snapUI_RefreshCtrlList();
+}
+
+global proc snapUI_ClearCtrls()
+{
+    global string $gSnapCtrls[];
+    $gSnapCtrls = {};
+    snapUI_RefreshCtrlList();
+}
+
+global proc snapUI_SetCurve()
+{
+    global string $gSnapCurve;
+    string $sel[] = `ls -sl`;
+    if (size($sel) == 0)
+    {
+        warning "Please select a curve in the viewport first.";
+        return;
+    }
+    string $obj = $sel[0];
+    string $parents[] = `listRelatives -parent $obj`;
+    if (`objectType $obj` == "nurbsCurve" && size($parents))
+        $obj = $parents[0];
+
+    $gSnapCurve = $obj;
+    textField -edit -text $obj "curveField";
+}
+
+global proc snapUI_Run()
+{
+    global string $gSnapCtrls[];
+    global string $gSnapCurve;
+
+    if (size($gSnapCtrls) == 0)
+    {
+        warning "Controller list is empty. Add some first.";
+        return;
+    }
+    if ($gSnapCurve == "" || !`objExists $gSnapCurve`)
+    {
+        warning "No valid curve set. Pick one first.";
+        return;
+    }
+
+    int $isOrdered = `radioButton -q -select "snapModeOrdered"`;
+
+    undoInfo -openChunk;
+    if ($isOrdered)
+    {
+        snapCtrlsToCurveOrdered($gSnapCtrls, $gSnapCurve);
+    }
+    else
+    {
+        int $cvIdx = `intField -q -value "sameCVIndex"`;
+        snapCtrlsToCurveSame($gSnapCtrls, $gSnapCurve, $cvIdx);
+    }
+    undoInfo -closeChunk;
+
+    print ("---- Snap done ----\n");
+}
+
+// ---------- Main window ----------
+global proc snapCtrlToCurveUI()
+{
+    string $win = "snapCtrlToCurveWin";
+
+    if (`window -exists $win`)
+        deleteUI $win;
+
+    global string $gSnapCtrls[];
+    global string $gSnapCurve;
+
+    $gSnapCtrls = {};
+    $gSnapCurve = "";
+
+    window -title "Snap Controls To Curve" -widthHeight 540 340 $win;
+    columnLayout -adjustableColumn true;
+
+    // ===== Main: two columns =====
+    rowLayout -numberOfColumns 2 -columnWidth2 260 260 -columnAttach2 "both" "both"
+              -columnOffset2 5 5 -adjustableColumn true;
+
+    // ---- Left: controller list ----
+    columnLayout -adjustableColumn true;
+    text -label "Controllers" -align "left";
+    textScrollList -height 180 -width 250 -allowMultiSelection true "ctrlList";
+    rowLayout -numberOfColumns 3 -columnWidth3 80 80 80 -adjustableColumn true;
+    button -label "Add Sel"    -width 80 -command "snapUI_AddCtrls()";
+    button -label "Remove Sel" -width 80 -command "snapUI_RemoveCtrls()";
+    button -label "Clear All"  -width 80 -command "snapUI_ClearCtrls()";
+    setParent ..;
+    setParent ..;
+
+    // ---- Right: curve picker ----
+    columnLayout -adjustableColumn true;
+    text -label "Target Curve" -align "left";
+    textField -width 250 -editable false -text "" "curveField";
+    button -label "Set Curve From Selection" -width 250 -command "snapUI_SetCurve()";
+
+    separator -height 10;
+
+    text -label "Snap Mode" -align "left";
+    radioCollection "snapMode";
+    radioButton -label "Ordered (1st->cv[0], 2nd->cv[1], ...)" -select "snapModeOrdered";
+    radioButton -label "All to the same CV" "snapModeSame";
+
+    rowLayout -numberOfColumns 2 -columnWidth2 150 100 -adjustableColumn true;
+    text -label "CV Index (same-CV mode):" -align "right";
+    intField -value 0 -width 100 "sameCVIndex";
+    setParent ..;
+    setParent ..;
+
+    setParent ..;  // back to main column
+
+    separator -height 8;
+
+    // ===== Bottom buttons =====
+    rowLayout -numberOfColumns 2 -columnWidth2 260 260 -adjustableColumn true;
+    button -label "RUN"   -height 40 -width 260 -command "snapUI_Run()";
+    button -label "Close" -height 40 -width 260 -command ("deleteUI " + $win);
+    setParent ..;
+
+    showWindow $win;
+}
+
+// ---------- Launch ----------
+snapCtrlToCurveUI();

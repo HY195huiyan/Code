@@ -1,0 +1,42 @@
+global proc alignObjToLoc()
+{
+    string $sel[] = `ls -sl -tr`;
+    int $count = size($sel);
+    
+    if ($count != 2) {
+        error("❌ 请恰好选择2个对象");
+        return;
+    }
+    
+    string $obj1 = $sel[0];
+    string $obj2 = $sel[1];
+    
+    string $shapes1[] = `listRelatives -s -type "locator" $obj1`;
+    string $shapes2[] = `listRelatives -s -type "locator" $obj2`;
+    
+    string $locator, $target;
+    
+    if (size($shapes1) > 0 && size($shapes2) == 0) {
+        $locator = $obj1;
+        $target = $obj2;
+    } else if (size($shapes2) > 0 && size($shapes1) == 0) {
+        $locator = $obj2;
+        $target = $obj1;
+    } else {
+        error("❌ 请选择1个模型 + 1个定位器");
+        return;
+    }
+    
+    print("将 " + $target + " 对齐到 " + $locator + "\n");
+    
+    // 获取定位器位置
+    float $pos[] = `xform -ws -q -piv $locator`;
+    float $rot[] = `xform -ws -q -ro $locator`;
+    
+    // 直接设置位置和旋转
+    xform -ws -t $pos[0] $pos[1] $pos[2] $target;
+    xform -ws -ro $rot[0] $rot[1] $rot[2] $target;
+    
+    print("✅ 完成！" + $target + " 已移到 (" + $pos[0] + ", " + $pos[1] + ", " + $pos[2] + ")\n");
+    refresh;
+}
