@@ -1,5 +1,5 @@
 
-import GeneralUtilities.dag as dagUtils;
+import dag as dagUtils;
 import maya.cmds as mc
 import maya.mel as mel
 import string_lib
