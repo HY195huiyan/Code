@@ -1,0 +1,256 @@
+global proc string createPhysicsCollisionNode(string $type, int $mode, int $addToLayer)
+{
+	string $layer = "CollidableObject_Layer";
+	string $node = "";
+
+	if ($mode == 0)
+	{
+		if ($type == "Sphere")
+		{
+			$node = `createNode transform -n CollidableSphere`;
+			createNode PhysicsCollisionSphere -n SphereShape -p $node;
+		}
+		else if ($type == "Box")
+		{
+			$node = `createNode transform -n CollidableBox`;
+			createNode PhysicsCollisionBox -n BoxShape -p $node;
+		}
+		else if ($type == "Cylinder")
+		{
+			$node = `createNode transform -n CollidableCylinder`;
+			createNode PhysicsCollisionCylinder -n CylinderShape -p $node;
+		}
+		else if ($type == "Capsule")
+		{
+			$node = `createNode transform -n CollidableCapsule`;
+			createNode PhysicsCollisionCapsule -n CapsuleShape -p $node;
+		}
+	}
+	else if ($mode == 1)
+	{
+		$selected = `ls -selection -type transform`;
+
+		if (!`size($selected)`)
+			error "Please select one or more game objects.";
+
+
+		// determine if multiple different parents
+		string $parent = `firstParentOf $selected[0]`;
+
+		int $multipleObjects = 0;
+		if (size($selected) > 1)
+			$multipleObjects = 1;
+
+		int $multipleParents = 0;
+		if ($multipleObjects)
+		{
+			for ($i = 1; $i < size($selected); $i++)
+			{
+				string $newP = `firstParentOf $selected[$i]`;
+				if ($newP != $parent)
+				{
+					$multipleParents = 1;
+					break;
+				}
+			}
+		}
+
+
+		float $bboxAll[] = {99999999,99999999,99999999,-99999999,-99999999,-99999999};
+
+		float $rot[]= {0, 0, 0};
+
+		for($selection in $selected)
+		{
+
+			if (!$multipleObjects)
+			{
+				$rot =`xform -query -rotation $selection`;
+				xform -rotation 0 0 0 $selection;
+			}
+
+			$meshes = `listRelatives -fullPath -allDescendents $selection`;
+
+			for($mesh in $meshes)
+			{
+				if(!`getAttr ($mesh+".io")`)
+				{
+					$transform = `listRelatives -fullPath -parent $mesh`;
+
+					if ($multipleParents)
+						$bbox = `xform -query -worldSpace -boundingBox $transform`;
+					else
+						$bbox = `xform -query -boundingBox $transform`;
+
+					if($bbox[0]<$bboxAll[0])
+						$bboxAll[0] = $bbox[0];
+
+					if($bbox[1]<$bboxAll[1])
+						$bboxAll[1] = $bbox[1];
+
+					if($bbox[2]<$bboxAll[2])
+						$bboxAll[2] = $bbox[2];
+
+					if($bbox[3]>$bboxAll[3])
+						$bboxAll[3] = $bbox[3];
+
+					if($bbox[4]>$bboxAll[4])
+						$bboxAll[4] = $bbox[4];
+
+					if($bbox[5]>$bboxAll[5])
+						$bboxAll[5] = $bbox[5];
+				}
+			}
+		}
+
+		float $size[];
+		$size[0] = $bboxAll[3] - $bboxAll[0];
+		$size[1] = $bboxAll[4] - $bboxAll[1];
+		$size[2] = $bboxAll[5] - $bboxAll[2];
+
+		float $center[];
+		$center[0] = $bboxAll[3] - ($size[0]*.5);
+		$center[1] = $bboxAll[4] - ($size[1]*.5);
+		$center[2] = $bboxAll[5] - ($size[2]*.5);
+
+		if ($type == "Sphere")
+		{
+			float $biggest = $size[0];
+
+			if ($size[1] > $biggest)
+				$biggest = $size[1];
+			if ($size[2] > $biggest)
+				$biggest = $size[2];
+
+			$node = `createNode transform -n CollidableSphere`;
+			createNode PhysicsCollisionSphere -n SphereShape -p $node;
+
+			setAttr ($node + ".scaleX") $biggest;
+			setAttr ($node + ".scaleY") $biggest;
+			setAttr ($node + ".scaleZ") $biggest;
+
+		}
+		else if ($type == "Box")
+		{
+
+			$node = `createNode transform -n CollidableBox`;
+			createNode PhysicsCollisionBox -n BoxShape -p $node;
+
+			setAttr ($node + ".sizeX") $size[0];
+			setAttr ($node + ".sizeY") $size[1];
+			setAttr ($node + ".sizeZ") $size[2];
+		}
+		else if ($type == "Cylinder")
+		{
+			float $height = 0;
+			float $rad = 0;
+			string $r = "";
+
+			if (!$multipleObjects)
+			{
+				if (($size[0] > $size[1])&&($size[0] > $size[2]))
+				{
+					$r = "rotateZ";
+					$height = $size[0];
+					if ($size[1] > $size[2])
+						$rad = $size[1];
+					else
+						$rad = $size[2];
+				}
+				else if (($size[1] > $size[0])&&($size[1] > $size[2]))
+				{
+					$height = $size[1];
+
+					if ($size[0] > $size[2])
+						$rad = $size[0];
+					else
+						$rad = $size[2];
+
+				}
+				else
+				{
+					$r = "rotateX";
+					$height = $size[2];
+
+					if ($size[0] > $size[1])
+						$rad = $size[0];
+					else
+						$rad = $size[1];
+				}
+			}
+			else
+			{
+				$height = $size[1];
+				$rad = $size[0];
+				if ($size[2] > $rad)
+					$rad = $size[2];
+			}
+
+			$node = `createNode transform -n CollidableCylinder`;
+			createNode PhysicsCollisionCylinder -n CylinderShape -p $node;
+
+			setAttr ($node + ".radius") 1;
+			setAttr ($node + ".scaleX") ($rad/2);
+			setAttr ($node + ".scaleY") $height;
+			setAttr ($node + ".scaleZ") ($rad/2);
+
+			if ((!$multipleObjects)&&($r != ""))
+				setAttr ($node + "." + $r) 90;
+
+		}
+		else if ($type == "Capsule")
+		{
+			float $height = $size[1];
+			float $rad = $size[0];
+			if ($size[2] > $rad)
+				$rad = $size[2];
+			$node = `createNode transform -n CollidableCapsule`;
+			createNode PhysicsCollisionCapsule -n CapsuleShape -p $node;
+			setAttr ($node + ".radius") 1;
+			setAttr ($node + ".scaleX") ($rad/2);
+			setAttr ($node + ".scaleY") $height;
+			setAttr ($node + ".scaleZ") ($rad/2);
+		}
+
+		move -absolute $center[0] $center[1] $center[2] $node;
+
+
+		if (!$multipleObjects)
+		{
+			xform -rotation $rot[0] $rot[1] $rot[2] $selected[0];
+			if ($type == "Cylinder")
+			{
+				float $temp[] = `xform -q -rotation $node`;
+				xform -rotation ($rot[0]+$temp[0]) ($rot[1]+$temp[1]) ($rot[2]+$temp[2]) $node;
+
+			}
+			else
+				xform -rotation $rot[0] $rot[1] $rot[2] $node;
+
+		}
+		if ((!$multipleParents)&&($parent!= ""))
+			parent -r $node $parent;
+
+	}
+
+	if (($node != "") && ($addToLayer > 0))
+	{
+		string $layers[] = `ls -type "displayLayer" $layer`;
+
+		if (!size($layers))
+		{
+			if (!`objExists $layer`)
+			{
+				createDisplayLayer -name $layer;
+				setAttr ($layer + ".color") 30;
+			}
+		}
+
+		// add to display Layer
+		editDisplayLayerMembers $layer $node;
+
+		select $node;
+	}
+
+	return $node;
+}
