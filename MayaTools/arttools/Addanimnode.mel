@@ -1,0 +1,340 @@
+// ============================================================
+// 整合版：Anim Node 浏览器（createAnimNode2）
+// 改动：
+//   - Choose Directory 前自动清空列表
+//   - Clear 与 Create Anim Nodes 按钮等宽
+// ============================================================
+
+// ------------------------------------------------------------
+// 1. AnimRate 属性
+// ------------------------------------------------------------
+global proc addAnimRateTo(string $obj)
+{
+	if (`attributeQuery -node $obj -exists "_AnimRate"` > 0)
+	{
+		print ("Object " + $obj + " already has animRate attribute.\n");
+		return;
+	}
+
+	addAttr -ln _AnimRate -at enum -en "60=60:30=30:24=24:15=15" -dv 30 $obj;
+	setAttr -e -keyable true ($obj + "._AnimRate");
+	print ("Added AnimRate attributes for " + $obj + "\n");
+}
+
+global proc addAnimRate()
+{
+	string $selected[] = `ls -sl`;
+	for ($obj in $selected)
+		addAnimRateTo($obj);
+}
+
+// ------------------------------------------------------------
+// 2. AnimCompressionQuality 属性
+// ------------------------------------------------------------
+global proc addAnimCompressionQualityRun(string $obj)
+{
+	addAttr -ln _AnimCompressionQuality -at "enum" -en "Highest:High:Medium:Low:Off" -dv 3 $obj;
+	setAttr -e -keyable true ($obj + "._AnimCompressionQuality");
+}
+
+global proc addAnimCompressionQualityWork(string $selected[])
+{
+	for ($obj in $selected)
+	{
+		print ("\n");
+
+		if (`objExists ($obj+"."+"_AnimCompressionQuality")`)
+		{
+			$attributeNames = `addAttr -q -en ($obj+"._AnimCompressionQuality")`;
+			if ($attributeNames == "Highest:High:Medium:Low:Off")
+			{
+				print ( "Object \"" + $obj + "\" already has AnimCompressionQuality attribute. \t\t\t");
+				continue;
+			}
+			else
+			{
+				int $prevSetting;
+				$prevSetting = `getAttr ($obj+"._AnimCompressionQuality")`;
+
+				deleteAttr ($obj+"._AnimCompressionQuality");
+				if (!`objExists ($obj+"."+"_AnimCompressionQuality")`)
+				{
+					addAnimCompressionQualityRun($obj);
+					setAttr ($obj+"."+"_AnimCompressionQuality") $prevSetting;
+
+					print ("Updated AnimCompressionQuality attributes for \"" + $obj+"\"\t\t\t");
+				}
+			}
+		}
+		else
+		{
+			addAnimCompressionQualityRun($obj);
+			print ("Added AnimCompressionQuality attributes for \"" + $obj+"\"\t\t\t");
+		}
+	}
+}
+
+global proc addAnimCompressionQuality()
+{
+	string $selected[] = `ls -sl`;
+	addAnimCompressionQualityWork($selected);
+}
+
+global proc updateAllAnimCompressionQuality()
+{
+	string $attrs[] = `ls -o "*._AnimCompressionQuality"`;
+	string $nodes[];
+	for ($a in $attrs)
+	{
+		string $buf[];
+		tokenize $a "." $buf;
+		if (`objExists $buf[0]`)
+			$nodes[`size($nodes)`] = $buf[0];
+	}
+	addAnimCompressionQualityWork($nodes);
+}
+
+// ------------------------------------------------------------
+// 3. 创建单个 anim 节点
+// ------------------------------------------------------------
+global proc string createAnimNodeProcLite(string $fileLocation)
+{
+	string $buffer[];
+	tokenize $fileLocation "/" $buffer;
+
+	string $fileName[];
+	tokenize $buffer[size($buffer)-1] "." $fileName;
+
+	$groupName = `group -n $fileName[0] -em`;
+
+	addAttr -ln _fileLocation -dt "string" ("|"+$groupName);
+	setAttr -type "string" ("|"+$groupName+"._fileLocation") $fileLocation;
+
+	addAnimRateTo("|"+$groupName);
+	addAnimCompressionQualityWork({"|"+$groupName});
+
+	return $groupName;
+}
+
+// ------------------------------------------------------------
+// 4. 列表操作
+// ------------------------------------------------------------
+global proc addAnimToListLite(string $windowName, string $animPath)
+{
+	string $buffer[];
+	tokenize $animPath "./" $buffer;
+
+	string $nameBuffer[];
+	tokenize $buffer[size($buffer)-1] "." $nameBuffer;
+	string $animName = $nameBuffer[0];
+
+	string $line = ($animName + " " + $animPath);
+	textScrollList -e -append $line ("animScrollList"+$windowName);
+}
+
+global proc addAnimFilesToListLite(string $windowName, string $folder, string $animFiles[])
+{
+	for ($i=0; $i<`size($animFiles)`; $i++)
+	{
+		string $sceneName = ($folder + $animFiles[$i]);
+		addAnimToListLite($windowName, $sceneName);
+	}
+}
+
+global proc addFromThisDirectoryLite(string $windowName)
+{
+	string $folder = `textField -q -tx ("textField"+$windowName)`;
+	$folder = fromNativePath($folder);
+
+	if (`filetest -d $folder`)
+	{
+		int $size = `size($folder)`;
+		if (`substring $folder $size $size` != "/")
+			$folder = ($folder+"/");
+
+		string $animFiles[] = `getFileList -fld $folder -fs "*.anim"`;
+		addAnimFilesToListLite($windowName, $folder, $animFiles);
+
+		print ("\nAdded anims from (\""+$folder+"\")\n");
+	}
+	else
+	{
+		textField -e -tx "" ("textField"+$windowName);
+		error ("Sorry, This folder (\""+$folder+"\") does not Exists.");
+	}
+
+	textField -e -tx "" ("textField"+$windowName);
+}
+
+global proc animListContuine2Lite(string $folder, string $typ)
+{
+	string $windowName = "AnimListWindow";
+	$folder = ($folder+"/");
+
+	string $animFiles[] = `getFileList -fld $folder -fs "*.anim"`;
+	addAnimFilesToListLite($windowName, $folder, $animFiles);
+}
+
+global proc AnimListBrowser2Lite(string $windowName)
+{
+	// 先清空当前列表，再执行选择目录逻辑
+	textScrollList -e -ra ("animScrollList"+$windowName);
+
+	string $folder = `textField -q -tx ("textField"+$windowName)`;
+	$folder = fromNativePath($folder);
+
+	if (`filetest -d $folder`)
+		addFromThisDirectoryLite($windowName);
+	else
+		fileBrowser ("animListContuine2Lite", "folder", "", "4");
+}
+
+global proc clearAnimFileListLite(string $windowName)
+{
+	textScrollList -e -ra ("animScrollList"+$windowName);
+}
+
+global proc int selectAnimNodeLite(string $windowName)
+{
+	if (!`menuItem -q -cb ("selectAnimNodes"+$windowName)`)
+		return 0;
+
+	string $selected[] = `textScrollList -q -si ("animScrollList"+$windowName)`;
+	string $reallySelect[];
+
+	for ($select in $selected)
+	{
+		string $buffer[];
+		tokenize $select " " $buffer;
+		if (`objExists $buffer[0]`)
+		{
+			string $temps[] = `ls -l $buffer[0]`;
+			for ($temp in $temps)
+				$reallySelect[`size($reallySelect)`] = $temp;
+		}
+	}
+
+	if (`size($reallySelect)`)
+		select $reallySelect;
+
+	return 1;
+}
+
+// ------------------------------------------------------------
+// 5. 批量创建 anim 节点
+// ------------------------------------------------------------
+global proc makeAnimNodes2Lite(string $windowName)
+{
+	string $newFiles[] = `textScrollList -q -si ("animScrollList"+$windowName)`;
+
+	if (!`size($newFiles)`)
+		error "I'm sad :-(. You didn't select any anim file, so nothing happened... Try Again";
+
+	string $selected[] = `ls -sl`;
+
+	if (`size($selected)` > 1)
+		error "If you want me to parent these anims in the right place just select that group... Please try again.";
+
+	if (`window -q -ex $windowName`)
+		deleteUI $windowName;
+
+	string $groupNames[];
+	for ($newFile in $newFiles)
+	{
+		string $buffer[];
+		tokenize $newFile " " $buffer;
+
+		if (`filetest -r $buffer[1]`)
+		{
+			$groupNames[size($groupNames)] = `createAnimNodeProcLite $buffer[1]`;
+
+			if (`size($selected)`)
+				parent $groupNames[size($groupNames)-1] $selected[0];
+		}
+	}
+
+	select $groupNames;
+	print "\nAnim Nodes Created.\n";
+}
+
+// ------------------------------------------------------------
+// 6. 默认列表
+// ------------------------------------------------------------
+global proc makeDefaultList2Lite(string $windowName)
+{
+	string $file = `file -q -sn`;
+	if ($file == "")
+		return;
+
+	string $buffer[];
+	tokenize $file "/" $buffer;
+
+	$buffer[0] = ($buffer[0]+"/");
+	for ($i=1; size($buffer)-2 > $i; $i++)
+		$buffer[0] = ($buffer[0]+$buffer[$i]+"/");
+
+	$folder = ($buffer[0]+"anims/animFiles/");
+	if (!`filetest -d $folder`)
+		return;
+
+	string $animFiles[] = `getFileList -fld $folder -fs "*.anim"`;
+	addAnimFilesToListLite($windowName, $folder, $animFiles);
+}
+
+// ------------------------------------------------------------
+// 7. 主窗口
+// ------------------------------------------------------------
+global proc createAnimNode2Lite()
+{
+	string $windowName = "AnimListWindow";
+	if (`window -q -ex $windowName`)
+		deleteUI $windowName;
+
+	window -w 989 -h 600 -menuBar true $windowName;
+		menu -label "General" -allowOptionBoxes true;
+			menuItem -cb 0 -l "Select Anim Nodes" ("selectAnimNodes"+$windowName);
+			menuItem -divider true;
+
+	$form = `formLayout form`;
+
+	string $choose = `frameLayout -bs "etchedIn" -lv 0`;
+				rowColumnLayout -cw 1 622 -cw 2 350 -nc 2;
+					textField -enterCommand ("addFromThisDirectoryLite(\""+$windowName+"\")") ("textField"+$windowName);
+					button -l "Choose Directory" -c ("AnimListBrowser2Lite(\""+$windowName+"\")") ("chooseDirAnim"+$windowName);
+				setParent ..;
+			setParent ..;
+
+	$textScroll = `textScrollList -sc ("selectAnimNodeLite(\""+$windowName+"\")") -allowMultiSelection true -fn "smallFixedWidthFont" ("animScrollList"+$windowName)`;
+
+	string $frm = `frameLayout -bs "etchedIn" -lv 0`;
+			columnLayout -w 989;
+				separator -w 500;
+				// 两按钮等宽：各占一半
+				rowColumnLayout -nc 2 -cw 1 485 -cw 2 485;
+					button -w 485 -l "Clear" -c ("clearAnimFileListLite(\""+$windowName+"\")");
+					button -w 485 -l "Create Anim Nodes" -c ("makeAnimNodes2Lite(\""+$windowName+"\")") ("makeAnimNodesUI"+$windowName);
+				setParent ..;
+			setParent ..;
+
+	formLayout -e
+		-attachForm $choose "top" 2
+		-attachForm $choose "left" 2
+		-attachForm $choose "right" 2
+
+		-attachControl $textScroll "top" 2 $choose
+		-attachForm $textScroll "left" 2
+		-attachForm $textScroll "right" 2
+		-attachControl $textScroll "bottom" 2 $frm
+
+		-attachForm $frm "left" 2
+		-attachForm $frm "bottom" 2
+		-attachForm $frm "right" 2
+	$form;
+
+	showWindow $windowName;
+
+	makeDefaultList2Lite($windowName);
+}
+
+// 打开窗口
+createAnimNode2Lite;

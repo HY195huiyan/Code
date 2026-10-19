@@ -1,0 +1,303 @@
+// ============================================================
+// Anim 属性工具窗口（整合版）
+// 按钮：
+//   Add Anim Tween / Add Anim Cycle / Add Anim Rate
+//   Add Anim Compression Quality
+//   Create Alembic Anim Node / Select Anim Nodes
+// ============================================================
+
+// ------------------------------------------------------------
+// 通用：添加 bool 属性（不存在才加，默认 1，keyable）
+// ------------------------------------------------------------
+global proc addBoolKeyableAttr(string $obj, string $attrName)
+{
+	if (`attributeQuery -node $obj -exists $attrName` > 0)
+		return;
+	addAttr -ln $attrName -at bool $obj;
+	setAttr ($obj + "." + $attrName) 1;
+	setAttr -e -keyable true ($obj + "." + $attrName);
+}
+
+// ------------------------------------------------------------
+// 1. Add Anim Tween
+// ------------------------------------------------------------
+global proc addAnimTween()
+{
+	scriptMeter "addAnimTween";
+
+	string $selected[] = `ls -sl`;
+	print ("----------------------------------------------------------------------------------------------\n");
+	print "Adding AnimTween attributes to selected objects \n";
+	print ("----------------------------------------------------------------------------------------------\n");
+
+	for ($obj in $selected)
+	{
+		$exists = `attributeQuery -node $obj -exists "_AnimTweenTime"`;
+		float $oldValue = 2.0;
+
+		if ($exists > 0)
+		{
+			print ("Object " + $obj + " has an old attribute(AnimTween) and is replaced with a AnimTweenTimeInSecs \n");
+			$oldValue = `getAttr ($obj + "._AnimTweenTime")`;
+			deleteAttr -attribute "_AnimTweenTime" $obj;
+		}
+
+		$exists = `attributeQuery -node $obj -exists "_AnimTweenTimeInSecs"`;
+		if ($exists > 0)
+		{
+			print ("Object " + $obj + " already has AnimTween attributes. \n");
+		}
+		else
+		{
+			addAttr -ln _AnimTweenTimeInSecs -at double $obj;
+			setAttr -e -keyable true ($obj + "._AnimTweenTimeInSecs");
+			setAttr ($obj + "._AnimTweenTimeInSecs") $oldValue;
+			print ("Added _AnimTweenTimeInSecs attributes for " + $obj + "\n");
+		}
+
+		$exists = `attributeQuery -node $obj -exists "_AnimButton"`;
+		if ($exists == 0)
+		{
+			addAttr -ln _AnimButton -at long -min 0 -max 8 -dv 0 $obj;
+			setAttr -e -keyable true ($obj + "._AnimButton");
+			print ("Added _AnimButton attributes for " + $obj + "\n");
+		}
+	}
+}
+
+// ------------------------------------------------------------
+// 2. Add Anim Cycle
+// ------------------------------------------------------------
+global proc addAnimCycleTo(string $obj)
+{
+	if (`attributeQuery -node $obj -exists "_AnimCycle"` > 0)
+	{
+		print ("Object " + $obj + " already has animCycle attribute.\n");
+		return;
+	}
+	addAttr -ln _AnimCycle -at bool $obj;
+	setAttr ($obj + "._AnimCycle") 1;
+	setAttr -e -keyable true ($obj + "._AnimCycle");
+	print ("Added AnimCycle attributes for " + $obj + "\n");
+}
+
+global proc addAnimCycle()
+{
+	string $selected[] = `ls -sl`;
+	for ($obj in $selected)
+		addAnimCycleTo($obj);
+}
+
+// ------------------------------------------------------------
+// 3. Add Anim Rate
+// ------------------------------------------------------------
+global proc addAnimRateTo(string $obj)
+{
+	if (`attributeQuery -node $obj -exists "_AnimRate"` > 0)
+	{
+		print ("Object " + $obj + " already has animRate attribute.\n");
+		return;
+	}
+	addAttr -ln _AnimRate -at enum -en "60=60:30=30:24=24:15=15" -dv 30 $obj;
+	setAttr -e -keyable true ($obj + "._AnimRate");
+	print ("Added AnimRate attributes for " + $obj + "\n");
+}
+
+global proc addAnimRate()
+{
+	string $selected[] = `ls -sl`;
+	for ($obj in $selected)
+		addAnimRateTo($obj);
+}
+
+// ------------------------------------------------------------
+// 4. Add Anim Compression Quality
+// ------------------------------------------------------------
+global proc addAnimCompressionQualityRun(string $obj)
+{
+	addAttr -ln _AnimCompressionQuality -at "enum" -en "Highest:High:Medium:Low:Off" -dv 3 $obj;
+	setAttr -e -keyable true ($obj + "._AnimCompressionQuality");
+}
+
+global proc addAnimCompressionQualityWork(string $selected[])
+{
+	for ($obj in $selected)
+	{
+		print ("\n");
+		if (`objExists ($obj+"."+"_AnimCompressionQuality")`)
+		{
+			$attributeNames = `addAttr -q -en ($obj+"._AnimCompressionQuality")`;
+			if ($attributeNames == "Highest:High:Medium:Low:Off")
+			{
+				print ("Object \"" + $obj + "\" already has AnimCompressionQuality attribute. \t\t\t");
+				continue;
+			}
+			else
+			{
+				int $prevSetting;
+				$prevSetting = `getAttr ($obj+"._AnimCompressionQuality")`;
+				deleteAttr ($obj+"._AnimCompressionQuality");
+				if (!`objExists ($obj+"."+"_AnimCompressionQuality")`)
+				{
+					addAnimCompressionQualityRun($obj);
+					setAttr ($obj+"."+"_AnimCompressionQuality") $prevSetting;
+					print ("Updated AnimCompressionQuality attributes for \"" + $obj+"\"\t\t\t");
+				}
+			}
+		}
+		else
+		{
+			addAnimCompressionQualityRun($obj);
+			print ("Added AnimCompressionQuality attributes for \"" + $obj+"\"\t\t\t");
+		}
+	}
+}
+
+global proc addAnimCompressionQuality()
+{
+	string $selected[] = `ls -sl`;
+	addAnimCompressionQualityWork($selected);
+}
+
+global proc updateAllAnimCompressionQuality()
+{
+	string $attrs[] = `ls -o "*._AnimCompressionQuality"`;
+	string $nodes[];
+	for ($a in $attrs)
+	{
+		string $buf[];
+		tokenize $a "." $buf;
+		if (`objExists $buf[0]`)
+			$nodes[`size($nodes)`] = $buf[0];
+	}
+	addAnimCompressionQualityWork($nodes);
+}
+
+// ------------------------------------------------------------
+// 5. Create Alembic Anim Node
+//    过程名加 Tool 后缀，避免与原项目同名过程参数不一致的警告
+// ------------------------------------------------------------
+global proc string createAlembicAnimNodeProcTool(string $fileLocation)
+{
+	string $buffer[];
+	tokenize $fileLocation "/" $buffer;
+
+	string $fileName[];
+	tokenize $buffer[size($buffer)-1] "." $fileName;
+
+	$groupName = `group -n $fileName[0] -em`;
+	string $obj = "|"+$groupName;
+
+	addAttr -ln _fileLocation -dt "string" $obj;
+	setAttr -type "string" ($obj+"._fileLocation") $fileLocation;
+
+	addAnimCycleTo($obj);
+
+	addBoolKeyableAttr($obj, "_AnimAlembicPosition");
+	addBoolKeyableAttr($obj, "_AnimAlembicUV0");
+	addBoolKeyableAttr($obj, "_AnimAlembicUV1");
+	addBoolKeyableAttr($obj, "_AnimAlembicUV2");
+	addBoolKeyableAttr($obj, "_AnimAlembicUV3");
+	addBoolKeyableAttr($obj, "_AnimAlembicColor0");
+	addBoolKeyableAttr($obj, "_AnimAlembicColor1");
+	addBoolKeyableAttr($obj, "_AnimAlembicAlpha");
+	addBoolKeyableAttr($obj, "_AnimReplace");
+
+	return $groupName;
+}
+
+global proc createAlembicAnimNode()
+{
+	string $scene = `file -q -sn`;
+	string $buffer[];
+	tokenize $scene "/" $buffer;
+
+	$scene = $buffer[0];
+	for ($i=1; $i<`size($buffer)`-2; $i++)
+		$scene = ($scene+"/"+$buffer[$i]);
+
+	if (`filetest -d ($scene+"/anims/animFiles")`)
+		$scene = ($scene+"/anims/animFiles");
+
+	global string $gDefaultFileBrowserDir;
+	$gDefaultFileBrowserDir = $scene;
+
+	string $animFile[] = `fileDialog2 -fileMode 1 -fileFilter "Alembic File (*.abc)" -okCaption "create_node" -caption "create_node"`;
+	if ($animFile[0] != "")
+		createAlembicAnimNodeProcTool($animFile[0]);
+}
+
+// ------------------------------------------------------------
+// 6. Select Anim Nodes
+// ------------------------------------------------------------
+global proc selAnimNodes()
+{
+	string $selected[] = `ls -l -sl`;
+	if (`size($selected)` == 0)
+		$selected = `ls -l -as`;
+
+	string $children[] = `listRelatives -f -ad -typ transform $selected`;
+	for ($child in $children)
+	{
+		if (`objExists ($child+"._fileLocation")`)
+			select -add $child;
+	}
+
+	print "\nEdit them chill attributes\n";
+}
+
+// ------------------------------------------------------------
+// UI
+// ------------------------------------------------------------
+global proc animAttrToolUI()
+{
+	string $win = "animAttrToolWindow";
+	if (`window -q -ex $win`)
+		deleteUI $win;
+
+	window -w 340 -h 340 -title "Anim Attribute Tool" -menuBar false $win;
+		columnLayout -adjustableColumn true -w 340;
+
+			text -l "Add anim edit flags:" -align "left" -font "boldLabelFont";
+			button -w 320 -h 32 -l "Add Anim Tween" -c "animAttrToolRun(\"addAnimTween\")";
+			button -w 320 -h 32 -l "Add Anim Cycle" -c "animAttrToolRun(\"addAnimCycle\")";
+			button -w 320 -h 32 -l "Add Anim Rate" -c "animAttrToolRun(\"addAnimRate\")";
+			button -w 320 -h 32 -l "Add Anim Compression Quality" -c "animAttrToolRun(\"addAnimCompressionQuality\")";
+
+			separator -h 8;
+
+			text -l "Edit anim nodes:" -align "left" -font "boldLabelFont";
+			button -w 320 -h 32 -l "Create Alembic Anim Node" -c "animAttrToolRun(\"createAlembicAnimNode\")";
+			button -w 320 -h 32 -l "Select Anim Nodes" -c "animAttrToolRun(\"selAnimNodes\")";
+
+		setParent ..;
+
+	showWindow $win;
+}
+
+// 按钮统一回调：catch 包裹，打印结果，避免一个报错炸掉 UI
+global proc animAttrToolRun(string $procName)
+{
+	// 除 Create Alembic / Select Anim Nodes 外，其他都需要选中对象
+	if ($procName != "createAlembicAnimNode" && $procName != "selAnimNodes")
+	{
+		string $sel[] = `ls -sl`;
+		if (`size($sel)` == 0)
+		{
+			warning "请先选中至少一个对象再执行。\n";
+			return;
+		}
+	}
+
+	if ($procName == "addAnimTween")                       addAnimTween;
+	else if ($procName == "addAnimCycle")                  addAnimCycle;
+	else if ($procName == "addAnimRate")                   addAnimRate;
+	else if ($procName == "addAnimCompressionQuality")     addAnimCompressionQuality;
+	else if ($procName == "createAlembicAnimNode")         createAlembicAnimNode;
+	else if ($procName == "selAnimNodes")                  selAnimNodes;
+
+	print ("\n[Done] " + $procName + "\n");
+}
+
+// 打开窗口
+animAttrToolUI;
