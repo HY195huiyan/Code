@@ -4,7 +4,7 @@
 
 具体使用文档：
 
-https://app.notion.com/p/3df44ae1589b80a39f7de957b584f693
+https://app.notion.com/p/Maya-Tools-3ff44ae1589b80d599e4d043cb4dc1f7
 
 **环境要求**
 
