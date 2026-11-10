@@ -10,7 +10,7 @@ public class BatchFBXImportTool : EditorWindow
     public class MeshCheckResult
     {
         public string meshName;
-        public Mesh meshRef; // 新增：保存 Mesh 的引用，用于定位
+        public Mesh meshRef;
         public List<string> namingIssues = new List<string>();
         public List<string> materialIssues = new List<string>();
         public List<string> uvIssues = new List<string>();
@@ -34,7 +34,6 @@ public class BatchFBXImportTool : EditorWindow
     private List<FBXReport> reports = new List<FBXReport>();
     private Vector2 scrollPos;
 
-    // Adds a menu item in the top toolbar (under Tools menu)
     [MenuItem("Tools/Batch Import FBX", false, 1)]
     public static void ShowWindow()
     {
@@ -66,7 +65,6 @@ public class BatchFBXImportTool : EditorWindow
         {
             EditorGUILayout.BeginVertical("box");
 
-            // One button per FBX file
             string btnText = report.fileName;
             if (report.TotalIssueCount > 0)
                 btnText += $"  ⚠️ ({report.IssueMeshCount} mesh(es) with {report.TotalIssueCount} issue(s))";
@@ -78,7 +76,6 @@ public class BatchFBXImportTool : EditorWindow
                 ShowDetailWindow(report);
             }
 
-            // Brief preview
             if (report.TotalIssueCount > 0)
             {
                 foreach (var mesh in report.meshResults.Where(m => m.HasAnyIssue).Take(2))
@@ -104,15 +101,22 @@ public class BatchFBXImportTool : EditorWindow
 
         reports.Clear();
 
-        string targetDir = "Assets/ImportedFBX";
-        if (!Directory.Exists(targetDir))
-            Directory.CreateDirectory(targetDir);
+        string rootDir = "Assets/ImportedFBX";
+        if (!Directory.Exists(rootDir))
+            Directory.CreateDirectory(rootDir);
 
         foreach (string sourcePath in paths)
         {
             string fileName = Path.GetFileName(sourcePath);
-            string destPath = Path.Combine(targetDir, fileName).Replace("\\", "/");
+            string baseName = Path.GetFileNameWithoutExtension(fileName);
 
+            // 1. 为每个 FBX 创建专属文件夹
+            string fbxDir = $"{rootDir}/{baseName}";
+            if (!Directory.Exists(fbxDir))
+                Directory.CreateDirectory(fbxDir);
+
+            // 将 FBX 复制到其专属文件夹中
+            string destPath = $"{fbxDir}/{fileName}";
             if (File.Exists(destPath))
             {
                 AssetDatabase.DeleteAsset(destPath);
@@ -120,9 +124,14 @@ public class BatchFBXImportTool : EditorWindow
             File.Copy(sourcePath, destPath, true);
             AssetDatabase.ImportAsset(destPath, ImportAssetOptions.ForceUpdate);
 
+            // 2. 处理模型检查报告
             CheckFBX(destPath);
+
+            // 3. 处理材质抽离与实例化绑定
+            ProcessMaterialsAndGeneratePrefab(destPath, baseName, fbxDir);
         }
 
+        AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
         Debug.Log($"Batch import complete. Processed {reports.Count} FBX file(s).");
     }
@@ -152,24 +161,15 @@ public class BatchFBXImportTool : EditorWindow
         GameObject fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
         if (fbxAsset == null)
         {
-            report.meshResults.Add(new MeshCheckResult
-            {
-                meshName = "(root)",
-                namingIssues = { "Failed to load the FBX asset." }
-            });
+            report.meshResults.Add(new MeshCheckResult { meshName = "(root)", namingIssues = { "Failed to load the FBX asset." } });
             reports.Add(report);
             return;
         }
 
-        // Iterate over every MeshRenderer / SkinnedMeshRenderer and check per mesh
         Renderer[] renderers = fbxAsset.GetComponentsInChildren<Renderer>(true);
         if (renderers.Length == 0)
         {
-            report.meshResults.Add(new MeshCheckResult
-            {
-                meshName = "(root)",
-                namingIssues = { "No Renderer components found. This may not be a valid model." }
-            });
+            report.meshResults.Add(new MeshCheckResult { meshName = "(root)", namingIssues = { "No Renderer components found. This may not be a valid model." } });
             reports.Add(report);
             return;
         }
@@ -179,13 +179,9 @@ public class BatchFBXImportTool : EditorWindow
             MeshCheckResult result = new MeshCheckResult();
             result.meshName = renderer.gameObject.name;
 
-            // 1. Naming check
             CheckModelNaming(renderer.gameObject, result);
-
-            // 2. Material check
             CheckMaterials(renderer, result);
 
-            // 3. UV check (only if a mesh exists)
             Mesh mesh = null;
             if (renderer is MeshRenderer mr)
             {
@@ -197,7 +193,6 @@ public class BatchFBXImportTool : EditorWindow
                 mesh = smr.sharedMesh;
             }
 
-            // 保存 Mesh 引用供 UI 定位使用
             result.meshRef = mesh;
 
             if (mesh != null)
@@ -209,6 +204,61 @@ public class BatchFBXImportTool : EditorWindow
         }
 
         reports.Add(report);
+    }
+
+    /// <summary>
+    /// 核心逻辑：抽离材质到专属子文件夹，实例化模型，赋予抽离出的材质，并保存为 Prefab
+    /// </summary>
+    private void ProcessMaterialsAndGeneratePrefab(string fbxPath, string baseName, string fbxDir)
+    {
+        // 材质文件夹改为创建在对应的 FBX 文件夹内部
+        string materialDir = $"{fbxDir}/Materials";
+        if (!Directory.Exists(materialDir))
+            Directory.CreateDirectory(materialDir);
+
+        GameObject fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
+        if (fbxAsset == null) return;
+
+        GameObject instance = Instantiate(fbxAsset);
+        instance.name = baseName;
+
+        Dictionary<Material, Material> extractedMaterials = new Dictionary<Material, Material>();
+
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
+        foreach (var renderer in renderers)
+        {
+            Material[] sharedMats = renderer.sharedMaterials;
+            Material[] newMats = new Material[sharedMats.Length];
+
+            for (int i = 0; i < sharedMats.Length; i++)
+            {
+                Material originalMat = sharedMats[i];
+                if (originalMat == null) continue;
+
+                if (!extractedMaterials.ContainsKey(originalMat))
+                {
+                    Material newMat = new Material(originalMat);
+
+                    string newMatName = $"{baseName}_{originalMat.name}.mat";
+                    string newMatPath = $"{materialDir}/{newMatName}";
+
+                    newMatPath = AssetDatabase.GenerateUniqueAssetPath(newMatPath);
+
+                    AssetDatabase.CreateAsset(newMat, newMatPath);
+                    extractedMaterials.Add(originalMat, newMat);
+                }
+
+                newMats[i] = extractedMaterials[originalMat];
+            }
+
+            renderer.sharedMaterials = newMats;
+        }
+
+        // Prefab 也直接保存在对应的 FBX 文件夹内部
+        string prefabPath = $"{fbxDir}/{baseName}.prefab";
+        PrefabUtility.SaveAsPrefabAsset(instance, prefabPath);
+
+        DestroyImmediate(instance);
     }
 
     private void CheckModelNaming(GameObject go, MeshCheckResult result)
@@ -315,7 +365,7 @@ public class BatchFBXImportTool : EditorWindow
         {
             var window = GetWindow<FBXDetailWindow>("FBX Details");
             window.report = rep;
-            window.minSize = new Vector2(600, 350); // 稍微加宽了一点，适应按钮
+            window.minSize = new Vector2(600, 350);
             window.Show();
         }
 
@@ -330,6 +380,12 @@ public class BatchFBXImportTool : EditorWindow
             EditorGUILayout.LabelField($"File: {report.fileName}", EditorStyles.boldLabel);
             EditorGUILayout.LabelField($"Path: {report.assetPath}", EditorStyles.miniLabel);
             EditorGUILayout.LabelField($"Meshes: {report.meshResults.Count}   |   Meshes with issues: {report.IssueMeshCount}", EditorStyles.miniLabel);
+
+            // 更新 UI 路径提示
+            string baseName = Path.GetFileNameWithoutExtension(report.fileName);
+            string fbxDir = Path.GetDirectoryName(report.assetPath).Replace("\\", "/");
+            EditorGUILayout.LabelField($"Generated Prefab: {fbxDir}/{baseName}.prefab", EditorStyles.miniLabel);
+            EditorGUILayout.LabelField($"Extracted Materials: {fbxDir}/Materials/", EditorStyles.miniLabel);
             EditorGUILayout.Space();
 
             if (report.TotalIssueCount == 0)
@@ -337,7 +393,6 @@ public class BatchFBXImportTool : EditorWindow
                 EditorGUILayout.HelpBox("✅ No issues found in this file.", MessageType.Info);
             }
 
-            // Column header
             EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
             EditorGUILayout.LabelField("Mesh (Click to Ping)", EditorStyles.toolbarButton, GUILayout.Width(180));
             EditorGUILayout.LabelField("Naming", EditorStyles.toolbarButton, GUILayout.Width(60));
@@ -350,10 +405,8 @@ public class BatchFBXImportTool : EditorWindow
 
             foreach (var mesh in report.meshResults)
             {
-                // One row per mesh
                 EditorGUILayout.BeginHorizontal("box");
 
-                // 使用 GUI.Button 来让名字可以点击
                 if (GUILayout.Button(mesh.meshName, EditorStyles.label, GUILayout.Width(180)))
                 {
                     PingMesh(mesh.meshRef);
@@ -363,7 +416,6 @@ public class BatchFBXImportTool : EditorWindow
                 EditorGUILayout.LabelField(mesh.materialIssues.Count > 0 ? "⚠️" : "✅", GUILayout.Width(60));
                 EditorGUILayout.LabelField(mesh.uvIssues.Count > 0 ? "⚠️" : "✅", GUILayout.Width(60));
 
-                // Combine all issues for this mesh into one readable string
                 List<string> allIssues = new List<string>();
                 allIssues.AddRange(mesh.namingIssues);
                 allIssues.AddRange(mesh.materialIssues);
@@ -392,7 +444,6 @@ public class BatchFBXImportTool : EditorWindow
             }
         }
 
-        // 定位 Mesh 的专用方法
         private void PingMesh(Mesh mesh)
         {
             if (mesh == null)
@@ -401,10 +452,7 @@ public class BatchFBXImportTool : EditorWindow
                 return;
             }
 
-            // 1. 在 Project 窗口中高亮（Ping）该 Mesh 文件（通常是 FBX 内的子资源）
             EditorGUIUtility.PingObject(mesh);
-
-            // 2. 同时在 Inspector 面板中选中该 Mesh 资源，方便直接查看属性
             Selection.activeObject = mesh;
         }
     }
