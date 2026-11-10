@@ -6,12 +6,29 @@ using System.Linq;
 
 public class BatchFBXImportTool : EditorWindow
 {
+    // Per-mesh check result
+    public class MeshCheckResult
+    {
+        public string meshName;
+        public Mesh meshRef; // 新增：保存 Mesh 的引用，用于定位
+        public List<string> namingIssues = new List<string>();
+        public List<string> materialIssues = new List<string>();
+        public List<string> uvIssues = new List<string>();
+
+        public bool HasAnyIssue => namingIssues.Count > 0 || materialIssues.Count > 0 || uvIssues.Count > 0;
+
+        public int TotalIssueCount => namingIssues.Count + materialIssues.Count + uvIssues.Count;
+    }
+
     // Stores the check result for each FBX
-    private class FBXReport
+    public class FBXReport
     {
         public string assetPath;
         public string fileName;
-        public List<string> issues = new List<string>();
+        public List<MeshCheckResult> meshResults = new List<MeshCheckResult>();
+
+        public int TotalIssueCount => meshResults.Sum(r => r.TotalIssueCount);
+        public int IssueMeshCount => meshResults.Count(r => r.HasAnyIssue);
     }
 
     private List<FBXReport> reports = new List<FBXReport>();
@@ -51,8 +68,8 @@ public class BatchFBXImportTool : EditorWindow
 
             // One button per FBX file
             string btnText = report.fileName;
-            if (report.issues.Count > 0)
-                btnText += $"  ⚠️ ({report.issues.Count} issue(s))";
+            if (report.TotalIssueCount > 0)
+                btnText += $"  ⚠️ ({report.IssueMeshCount} mesh(es) with {report.TotalIssueCount} issue(s))";
             else
                 btnText += "  ✅";
 
@@ -62,14 +79,14 @@ public class BatchFBXImportTool : EditorWindow
             }
 
             // Brief preview
-            if (report.issues.Count > 0)
+            if (report.TotalIssueCount > 0)
             {
-                foreach (var issue in report.issues.Take(2))
+                foreach (var mesh in report.meshResults.Where(m => m.HasAnyIssue).Take(2))
                 {
-                    EditorGUILayout.LabelField("  • " + issue, EditorStyles.miniLabel);
+                    EditorGUILayout.LabelField($"  • {mesh.meshName} ({mesh.TotalIssueCount} issue(s))", EditorStyles.miniLabel);
                 }
-                if (report.issues.Count > 2)
-                    EditorGUILayout.LabelField($"  ... and {report.issues.Count - 2} more issue(s)", EditorStyles.miniLabel);
+                if (report.IssueMeshCount > 2)
+                    EditorGUILayout.LabelField($"  ... and {report.IssueMeshCount - 2} more mesh(es) with issues", EditorStyles.miniLabel);
             }
 
             EditorGUILayout.EndVertical();
@@ -81,14 +98,12 @@ public class BatchFBXImportTool : EditorWindow
 
     private void ImportFBXFiles()
     {
-        // Open folder selection dialog
         string[] paths = SelectFBXFiles();
         if (paths == null || paths.Length == 0)
             return;
 
         reports.Clear();
 
-        // Ensure the target directory exists
         string targetDir = "Assets/ImportedFBX";
         if (!Directory.Exists(targetDir))
             Directory.CreateDirectory(targetDir);
@@ -98,16 +113,13 @@ public class BatchFBXImportTool : EditorWindow
             string fileName = Path.GetFileName(sourcePath);
             string destPath = Path.Combine(targetDir, fileName).Replace("\\", "/");
 
-            // Copy the file into the Assets folder (Unity only recognizes assets under Assets)
             if (File.Exists(destPath))
             {
-                // If it already exists, delete it first, then copy again to ensure refresh
                 AssetDatabase.DeleteAsset(destPath);
             }
             File.Copy(sourcePath, destPath, true);
             AssetDatabase.ImportAsset(destPath, ImportAssetOptions.ForceUpdate);
 
-            // Check this FBX
             CheckFBX(destPath);
         }
 
@@ -117,7 +129,6 @@ public class BatchFBXImportTool : EditorWindow
 
     private string[] SelectFBXFiles()
     {
-        // Use OpenFolderPanel to select a folder containing FBX files, then enumerate .fbx files inside.
         string folder = EditorUtility.OpenFolderPanel("Select Folder Containing FBX Files", "", "");
         if (string.IsNullOrEmpty(folder))
             return null;
@@ -138,207 +149,263 @@ public class BatchFBXImportTool : EditorWindow
         report.assetPath = assetPath;
         report.fileName = Path.GetFileNameWithoutExtension(assetPath);
 
-        // Load the FBX asset
         GameObject fbxAsset = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
         if (fbxAsset == null)
         {
-            report.issues.Add("Failed to load the FBX asset.");
+            report.meshResults.Add(new MeshCheckResult
+            {
+                meshName = "(root)",
+                namingIssues = { "Failed to load the FBX asset." }
+            });
             reports.Add(report);
             return;
         }
 
-        // Check 1: Whether the model naming contains default names like "polycylinder"
-        CheckModelNaming(fbxAsset, report);
+        // Iterate over every MeshRenderer / SkinnedMeshRenderer and check per mesh
+        Renderer[] renderers = fbxAsset.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length == 0)
+        {
+            report.meshResults.Add(new MeshCheckResult
+            {
+                meshName = "(root)",
+                namingIssues = { "No Renderer components found. This may not be a valid model." }
+            });
+            reports.Add(report);
+            return;
+        }
 
-        // Check 2: Whether any part has no material applied
-        CheckMaterials(fbxAsset, report);
+        foreach (Renderer renderer in renderers)
+        {
+            MeshCheckResult result = new MeshCheckResult();
+            result.meshName = renderer.gameObject.name;
+
+            // 1. Naming check
+            CheckModelNaming(renderer.gameObject, result);
+
+            // 2. Material check
+            CheckMaterials(renderer, result);
+
+            // 3. UV check (only if a mesh exists)
+            Mesh mesh = null;
+            if (renderer is MeshRenderer mr)
+            {
+                var mf = mr.GetComponent<MeshFilter>();
+                if (mf != null) mesh = mf.sharedMesh;
+            }
+            else if (renderer is SkinnedMeshRenderer smr)
+            {
+                mesh = smr.sharedMesh;
+            }
+
+            // 保存 Mesh 引用供 UI 定位使用
+            result.meshRef = mesh;
+
+            if (mesh != null)
+                CheckUV(mesh, result);
+            else
+                result.uvIssues.Add("No mesh assigned to this renderer.");
+
+            report.meshResults.Add(result);
+        }
 
         reports.Add(report);
     }
 
-    private void CheckModelNaming(GameObject fbxAsset, FBXReport report)
+    private void CheckModelNaming(GameObject go, MeshCheckResult result)
     {
-        // Get all children (including those with Mesh Renderers)
-        Transform[] allTransforms = fbxAsset.GetComponentsInChildren<Transform>(true);
-        List<string> suspiciousNames = new List<string>();
+        string name = go.name.ToLower().Trim();
+        if (string.IsNullOrEmpty(name)) return;
 
-        // Default / suspicious naming patterns from Maya, 3ds Max, Blender, etc.
         string[] suspiciousPatterns = new string[]
         {
-            "polycylinder",
-            "polycube",
-            "polysphere",
-            "polytorus",
-            "polyplane",
-            "polycone",
-            "poly",
-            "pcube",
-            "pcylinder",
-            "psphere",
-            "ptorus",
-            "pplane",
-            "pcone",
-            "p cube",
-            "p cylinder",
-            "p sphere",
-            "p torus",
-            "p plane",
-            "p cone",
-            "cube",
-            "cylinder",
-            "sphere",
-            "torus",
-            "plane",
-            "cone",
-            "mesh",
-            "object",
-            "group",
-            "null",
-            "locator"
+            "polycylinder", "polycube", "polysphere", "polytorus", "polyplane", "polycone", "poly",
+            "pcube", "pcylinder", "psphere", "ptorus", "pplane", "pcone",
+            "p cube", "p cylinder", "p sphere", "p torus", "p plane", "p cone",
+            "cube", "cylinder", "sphere", "torus", "plane", "cone",
+            "mesh", "object", "group", "null", "locator"
         };
 
-        foreach (Transform t in allTransforms)
+        foreach (string pattern in suspiciousPatterns)
         {
-            if (t == fbxAsset.transform) continue; // Skip the root object
-
-            string name = t.name.ToLower().Trim();
-
-            // Skip empty names
-            if (string.IsNullOrEmpty(name)) continue;
-
-            bool isSuspicious = false;
-            foreach (string pattern in suspiciousPatterns)
+            if (name == pattern || name.StartsWith(pattern))
             {
-                // Exact match or starts with pattern (e.g., "pCube1", "polyCylinder2")
-                if (name == pattern || name.StartsWith(pattern))
-                {
-                    isSuspicious = true;
-                    break;
-                }
-                // Also catch names like "cube1", "sphere2"
-                if (name.StartsWith(pattern) && name.Length > pattern.Length && char.IsDigit(name[pattern.Length]))
-                {
-                    isSuspicious = true;
-                    break;
-                }
+                result.namingIssues.Add($"Name '{go.name}' looks like a default placeholder name.");
+                return;
             }
-
-            if (isSuspicious && !suspiciousNames.Contains(t.name))
-                suspiciousNames.Add(t.name);
-        }
-
-        if (suspiciousNames.Count > 0)
-        {
-            report.issues.Add($"Model naming may be non-standard (default-like names): {string.Join(", ", suspiciousNames)}");
+            if (name.StartsWith(pattern) && name.Length > pattern.Length && char.IsDigit(name[pattern.Length]))
+            {
+                result.namingIssues.Add($"Name '{go.name}' looks like a default placeholder name.");
+                return;
+            }
         }
     }
 
-    private void CheckMaterials(GameObject fbxAsset, FBXReport report)
+    private void CheckMaterials(Renderer renderer, MeshCheckResult result)
     {
-        Renderer[] renderers = fbxAsset.GetComponentsInChildren<Renderer>(true);
-        if (renderers.Length == 0)
+        Material[] mats = renderer.sharedMaterials;
+        if (mats == null || mats.Length == 0)
         {
-            report.issues.Add("No Renderer components found. This may not be a valid model.");
+            result.materialIssues.Add("No material assigned.");
             return;
         }
 
-        List<string> defaultMaterialObjects = new List<string>();
-
-        foreach (Renderer renderer in renderers)
+        foreach (Material mat in mats)
         {
-            Material[] mats = renderer.sharedMaterials;
-            if (mats == null || mats.Length == 0)
+            if (mat == null)
             {
-                defaultMaterialObjects.Add(renderer.gameObject.name);
-                continue;
+                result.materialIssues.Add("Material slot contains a null material.");
+                return;
             }
 
-            bool usesDefault = false;
-            foreach (Material mat in mats)
+            if (mat.name.Contains("Default-Diffuse") ||
+                mat.name.Contains("Default Diffuse") ||
+                AssetDatabase.GetAssetPath(mat).Contains("Default-Diffuse"))
             {
-                if (mat == null)
-                {
-                    usesDefault = true;
-                    break;
-                }
-
-                // Unity 默认漫射材质的名称通常包含 "Default-Diffuse"
-                // 同时检查路径以防名称被本地化或修改
-                if (mat.name.Contains("Default-Diffuse") ||
-                    mat.name.Contains("Default Diffuse") ||
-                    AssetDatabase.GetAssetPath(mat).Contains("Default-Diffuse"))
-                {
-                    usesDefault = true;
-                    break;
-                }
+                result.materialIssues.Add($"Uses Unity default diffuse material '{mat.name}' (likely no material in source FBX).");
+                return;
             }
+        }
+    }
 
-            if (usesDefault)
-                defaultMaterialObjects.Add(renderer.gameObject.name);
+    private void CheckUV(Mesh mesh, MeshCheckResult result)
+    {
+        if (mesh.uv == null || mesh.uv.Length == 0)
+        {
+            result.uvIssues.Add("Mesh has no UV data.");
+            return;
         }
 
-        if (defaultMaterialObjects.Count > 0)
+        Vector2[] uvs = mesh.uv;
+        int outOfRangeCount = 0;
+        float minU = float.MaxValue, maxU = float.MinValue;
+        float minV = float.MaxValue, maxV = float.MinValue;
+
+        foreach (var uv in uvs)
         {
-            report.issues.Add(
-                $"The following objects appear to use Unity's default diffuse material " +
-                $"(likely no material in the source FBX): {string.Join(", ", defaultMaterialObjects.Distinct())}"
+            if (uv.x < -0.001f || uv.x > 1.001f || uv.y < -0.001f || uv.y > 1.001f)
+                outOfRangeCount++;
+
+            minU = Mathf.Min(minU, uv.x);
+            maxU = Mathf.Max(maxU, uv.x);
+            minV = Mathf.Min(minV, uv.y);
+            maxV = Mathf.Max(maxV, uv.y);
+        }
+
+        if (outOfRangeCount > 0)
+        {
+            result.uvIssues.Add(
+                $"{outOfRangeCount}/{uvs.Length} UV(s) outside 0–1 " +
+                $"(U: {minU:F2} ~ {maxU:F2}, V: {minV:F2} ~ {maxV:F2})."
             );
         }
     }
 
     private void ShowDetailWindow(FBXReport report)
     {
-        // Open a detailed information window
-        FBXDetailWindow.ShowWindow(report.fileName, report.issues, report.assetPath);
+        FBXDetailWindow.ShowWindow(report);
     }
 
-    // Standalone detail window
+    // Standalone detail window with scrollable per-mesh list
     public class FBXDetailWindow : EditorWindow
     {
-        private string fileName;
-        private List<string> issues;
-        private string assetPath;
+        private FBXReport report;
         private Vector2 scrollPos;
 
-        public static void ShowWindow(string name, List<string> issueList, string path)
+        public static void ShowWindow(FBXReport rep)
         {
             var window = GetWindow<FBXDetailWindow>("FBX Details");
-            window.fileName = name;
-            window.issues = issueList;
-            window.assetPath = path;
-            window.minSize = new Vector2(400, 300);
+            window.report = rep;
+            window.minSize = new Vector2(600, 350); // 稍微加宽了一点，适应按钮
             window.Show();
         }
 
         private void OnGUI()
         {
-            EditorGUILayout.LabelField($"File: {fileName}", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField($"Path: {assetPath}", EditorStyles.miniLabel);
+            if (report == null)
+            {
+                EditorGUILayout.HelpBox("No report data.", MessageType.Error);
+                return;
+            }
+
+            EditorGUILayout.LabelField($"File: {report.fileName}", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField($"Path: {report.assetPath}", EditorStyles.miniLabel);
+            EditorGUILayout.LabelField($"Meshes: {report.meshResults.Count}   |   Meshes with issues: {report.IssueMeshCount}", EditorStyles.miniLabel);
             EditorGUILayout.Space();
 
-            if (issues == null || issues.Count == 0)
+            if (report.TotalIssueCount == 0)
             {
-                EditorGUILayout.HelpBox("✅ No issues found. Naming is standard and all materials are applied.", MessageType.Info);
+                EditorGUILayout.HelpBox("✅ No issues found in this file.", MessageType.Info);
             }
-            else
+
+            // Column header
+            EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
+            EditorGUILayout.LabelField("Mesh (Click to Ping)", EditorStyles.toolbarButton, GUILayout.Width(180));
+            EditorGUILayout.LabelField("Naming", EditorStyles.toolbarButton, GUILayout.Width(60));
+            EditorGUILayout.LabelField("Material", EditorStyles.toolbarButton, GUILayout.Width(60));
+            EditorGUILayout.LabelField("UV", EditorStyles.toolbarButton, GUILayout.Width(60));
+            EditorGUILayout.LabelField("Details", EditorStyles.toolbarButton);
+            EditorGUILayout.EndHorizontal();
+
+            scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
+
+            foreach (var mesh in report.meshResults)
             {
-                EditorGUILayout.HelpBox($"⚠️ {issues.Count} issue(s) found:", MessageType.Warning);
-                scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
-                foreach (var issue in issues)
+                // One row per mesh
+                EditorGUILayout.BeginHorizontal("box");
+
+                // 使用 GUI.Button 来让名字可以点击
+                if (GUILayout.Button(mesh.meshName, EditorStyles.label, GUILayout.Width(180)))
                 {
-                    EditorGUILayout.LabelField("• " + issue, EditorStyles.wordWrappedLabel);
-                    EditorGUILayout.Space(4);
+                    PingMesh(mesh.meshRef);
                 }
-                EditorGUILayout.EndScrollView();
+
+                EditorGUILayout.LabelField(mesh.namingIssues.Count > 0 ? "⚠️" : "✅", GUILayout.Width(60));
+                EditorGUILayout.LabelField(mesh.materialIssues.Count > 0 ? "⚠️" : "✅", GUILayout.Width(60));
+                EditorGUILayout.LabelField(mesh.uvIssues.Count > 0 ? "⚠️" : "✅", GUILayout.Width(60));
+
+                // Combine all issues for this mesh into one readable string
+                List<string> allIssues = new List<string>();
+                allIssues.AddRange(mesh.namingIssues);
+                allIssues.AddRange(mesh.materialIssues);
+                allIssues.AddRange(mesh.uvIssues);
+
+                if (allIssues.Count == 0)
+                {
+                    EditorGUILayout.LabelField("No issues.", EditorStyles.miniLabel);
+                }
+                else
+                {
+                    EditorGUILayout.LabelField(string.Join(" | ", allIssues), EditorStyles.wordWrappedMiniLabel);
+                }
+
+                EditorGUILayout.EndHorizontal();
             }
 
+            EditorGUILayout.EndScrollView();
+
             EditorGUILayout.Space();
-            if (GUILayout.Button("Ping Asset in Project Window", GUILayout.Height(25)))
+            if (GUILayout.Button("Ping FBX Asset in Project Window", GUILayout.Height(25)))
             {
-                var obj = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                var obj = AssetDatabase.LoadAssetAtPath<GameObject>(report.assetPath);
                 if (obj != null)
                     EditorGUIUtility.PingObject(obj);
             }
+        }
+
+        // 定位 Mesh 的专用方法
+        private void PingMesh(Mesh mesh)
+        {
+            if (mesh == null)
+            {
+                Debug.LogWarning("Mesh reference is null, cannot ping.");
+                return;
+            }
+
+            // 1. 在 Project 窗口中高亮（Ping）该 Mesh 文件（通常是 FBX 内的子资源）
+            EditorGUIUtility.PingObject(mesh);
+
+            // 2. 同时在 Inspector 面板中选中该 Mesh 资源，方便直接查看属性
+            Selection.activeObject = mesh;
         }
     }
 }
